@@ -7,29 +7,28 @@ import (
 	"log"
 	"net"
 	"os"
-
-	pb "github.com/CodersSquad/dc-final/proto"
+	pb "github.com/Benchamon/dc-final/proto"
 	"go.nanomsg.org/mangos"
-	"go.nanomsg.org/mangos/protocol/sub"
 	"google.golang.org/grpc"
-
-	// register transports
+	"go.nanomsg.org/mangos/protocol/respondent"
+	"github.com/Benchamon/dc-final/controller"
 	_ "go.nanomsg.org/mangos/transport/all"
 )
 
-var (
-	defaultRPCPort = 50051
-)
-
-// server is used to implement helloworld.GreeterServer.
+var defaultRPCPort = 50051
 type server struct {
-	pb.UnimplementedGreeterServer
+	pb.UnimplementedTaskServer
 }
 
 var (
 	controllerAddress = ""
-	workerName        = ""
+	WorkerName        = ""
 	tags              = ""
+	status            = ""
+	workDone          = 0
+	usage             = 0
+	port              = 0
+	jobsDone          = 0
 )
 
 func die(format string, v ...interface{}) {
@@ -37,42 +36,70 @@ func die(format string, v ...interface{}) {
 	os.Exit(1)
 }
 
-// SayHello implements helloworld.GreeterServer
 func (s *server) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
 	log.Printf("RPC: Received: %v", in.GetName())
-	return &pb.HelloReply{Message: "Hello " + in.GetName()}, nil
+	if in.GetName() == "test" {
+		workDone += 1
+		log.Printf("RPC [Worker] %+v: running", WorkerName)
+		usage += 1
+		status = "Running"
+		usage -= 1
+		return &pb.HelloReply{Message: "Hello, " + WorkerName + " running"}, nil
+	} else {
+		workDone += 1
+		log.Printf("[Worker] %+v: calling", WorkerName)
+		usage += 1
+		status = "Running"
+		return &pb.HelloReply{Message: "Hello " + WorkerName}, nil
+	}	
+}
+
+//no sirve profe :(
+func (s *server) FilterImage(ctx context.Context, in *pb.ImgRequest) (*pb.ImgReply, error) {
+
+	msg := fmt.Sprintf("Filtering image: %v filter: %v \n", in.GetImg().Filepath, in.GetImg().Filter)
+	fmt.Printf(msg)
+	controller.UpdateWorkerStatus(WorkerName, "busy")
+	newFilename := "new file"
+
+	if in.GetImg().Filter == "grayscale" {
+		newFilename = fmt.Sprintf("f%v_%v", in.Img.Index, in.Img.Name) + ".png"
+	} else {
+        return &pb.ImgReply{Message: "not supported " + WorkerName}, nil
+	}
+	controller.UpdateUsage(WorkerName)
+	controller.UpdateWorkerStatus(WorkerName, "free")
+	return &pb.ImgReply{Message: fmt.Sprintf("%v=%v", newFilename, in.Img.Workload)}, nil
 }
 
 func init() {
 	flag.StringVar(&controllerAddress, "controller", "tcp://localhost:40899", "Controller address")
-	flag.StringVar(&workerName, "worker-name", "hard-worker", "Worker Name")
+	flag.StringVar(&WorkerName, "worker-name", "hard-worker", "Worker Name")
 	flag.StringVar(&tags, "tags", "gpu,superCPU,largeMemory", "Comma-separated worker tags")
 }
 
-// joinCluster is meant to join the controller message-passing server
 func joinCluster() {
 	var sock mangos.Socket
 	var err error
 	var msg []byte
 
-	if sock, err = sub.NewSocket(); err != nil {
-		die("can't get new sub socket: %s", err.Error())
+	if sock, err = respondent.NewSocket(); err != nil {
+		die("no socket: %s", err.Error())
 	}
 
-	log.Printf("Connecting to controller on: %s", controllerAddress)
+	log.Printf("Connecting to: %s", controllerAddress)
 	if err = sock.Dial(controllerAddress); err != nil {
-		die("can't dial on sub socket: %s", err.Error())
-	}
-	// Empty byte array effectively subscribes to everything
-	err = sock.SetOption(mangos.OptionSubscribe, []byte(""))
-	if err != nil {
-		die("cannot subscribe: %s", err.Error())
+		die("can't dial: %s", err.Error())
 	}
 	for {
 		if msg, err = sock.Recv(); err != nil {
-			die("Cannot recv: %s", err.Error())
+			die("Error in recv function: %s", err.Error())
 		}
-		log.Printf("Message-Passing: Worker(%s): Received %s\n", workerName, string(msg))
+		info := fmt.Sprintf("%v %v %v %v %v %v", WorkerName, status, usage, tags, defaultRPCPort, jobsDone)
+		if err = sock.Send([]byte(info)); err != nil {
+			die("Error sending: %s", err.Error())
+		}
+		log.Printf("Message-Passing: Worker(%s): Received %s\n", WorkerName, string(msg))
 	}
 }
 
@@ -92,19 +119,16 @@ func getAvailablePort() int {
 
 func main() {
 	flag.Parse()
-
-	// Subscribe to Controller
 	go joinCluster()
-
-	// Setup Worker RPC Server
 	rpcPort := getAvailablePort()
+	defaultRPCPort = rpcPort
 	log.Printf("Starting RPC Service on localhost:%v", rpcPort)
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%v", rpcPort))
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
 	s := grpc.NewServer()
-	pb.RegisterGreeterServer(s, &server{})
+	pb.RegisterTaskServer(s, &server{})
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}

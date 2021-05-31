@@ -18,14 +18,33 @@ option java_multiple_files = true;
 option java_package = "io.grpc.examples.helloworld";
 option java_outer_classname = "HelloWorldProto";
 
-option go_package = "github.com/CodersSquad/final-dc/proto";
+option go_package = "github.com/Benchmon/final-dc/proto";
 
 package proto;
 
+message Image {
+  string workload = 1;
+  string name = 2;
+  int64 index = 3;
+  string filepath = 4;
+  string filter = 5;
+}
+
+message ImgRequest {
+  string name = 1;
+  Image img = 2;
+}
+
+message ImgReply {
+  string message = 1;
+}
+
 // The greeting service definition.
-service Greeter {
+service Task {
   // Sends a greeting
   rpc SayHello (HelloRequest) returns (HelloReply) {}
+
+  rpc FilterImage (ImgRequest) returns (ImgReply) {}
 }
 
 // The request message containing the user's name.
