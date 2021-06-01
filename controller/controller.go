@@ -79,7 +79,7 @@ func Start() {
 	
 	var resp []byte
 	for {
-		err = sock.Send([]byte("Welcome worker"))
+		err = sock.Send([]byte("Welcome"))
 		if err != nil {
 			die("No worker %+v", err.Error())
 		}
